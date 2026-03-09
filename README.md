@@ -1,6 +1,6 @@
-# CampusWatch 
+# SmartRoad AI 
 
-An intelligent, context-aware campus safety monitor that goes beyond object detection it understands scenes, recognizes behavioral patterns, and makes real-time alert decisions using Reinforcement Learning.
+An intelligent, context-aware traffic safety enforcement system that goes beyond speed cameras it understands driver behavior, detects distraction in real time, and automatically generates e-challans using Reinforcement Learning.
 
 ---
 
@@ -14,6 +14,7 @@ An intelligent, context-aware campus safety monitor that goes beyond object dete
 | &emsp;[Layer 2 — Object Detection](#layer-2--object-detection) | YOLOv8 real-time detection |
 | &emsp;[Layer 3 — RL Agent](#layer-3--rl-agent) | PPO intelligent decision-making |
 | [How the Layers Work Together](#how-the-layers-work-together) | Combined pipeline flow |
+| [Automatic Challan Generation](#automatic-challan-generation) | End-to-end enforcement pipeline |
 | [Tech Stack](#tech-stack) | Technologies and tools used |
 | [Future Scope](#future-scope) | Planned enhancements |
 
@@ -21,12 +22,14 @@ An intelligent, context-aware campus safety monitor that goes beyond object dete
 
 ## What This Project Delivers
 
-VIT CampusWatch is a **three-layer AI pipeline** that runs live on a webcam and delivers:
+SmartRoad AI is a **three-layer AI pipeline** that runs on a dashboard or traffic camera and delivers:
 
-- **Scene Understanding** — Every pixel in the frame is labeled: person, desk, door, floor, wall. The system knows *where* things are, not just *what* they are.
-- **Real-Time Object Detection** — YOLOv8 identifies and tracks objects frame-by-frame with bounding boxes and confidence scores.
-- **Intelligent Alert Decisions** — A Reinforcement Learning agent reads the scene context and decides: `All Clear`, `Monitor`, or `Alert` — based on *behavior*, not just presence.
-- **Context-Aware Safety** — A person sitting at a desk is normal. A person loitering near an exit is not. CampusWatch knows the difference.
+- **Scene Understanding** — Every pixel in the frame is labeled: driver seat, steering wheel, dashboard, road view, driver body. The system knows the spatial layout of the vehicle environment.
+- **Real-Time Object Detection** — YOLOv8 identifies phones, cigarettes, faces, and seatbelts frame-by-frame with bounding boxes and confidence scores.
+- **Intelligent Violation Decisions** — A Reinforcement Learning agent reads scene context and decides: `All Clear`, `Monitor`, or `Violation` — based on sustained behavior, not a single frame.
+- **Automatic E-Challan Generation** — Once a violation is confirmed, the system captures evidence, reads the license plate via ANPR, logs the violation, and generates a challan automatically.
+
+---
 
 ## Project Layers
 
@@ -35,19 +38,19 @@ VIT CampusWatch is a **three-layer AI pipeline** that runs live on a webcam and 
 **Model:** `nvidia/segformer-b0-finetuned-ade-512-512` (HuggingFace)
 
 **What it does:**
-Semantic segmentation assigns a label to every single pixel in the webcam frame. Unlike object detection which draws boxes, segmentation understands the *structure* of the entire scene.
+Semantic segmentation assigns a label to every single pixel in the camera frame. Unlike object detection which draws boxes, segmentation understands the *structure* of the entire driving environment.
 
 **What it labels:**
-- `person` — any human in the frame
-- `desk / table` — workspace zones
-- `door` — entry/exit points
-- `floor / wall / ceiling` — spatial boundaries
-- 147 other ADE20K categories
+- `driver seat` — driver position zone
+- `steering wheel area` — hands-on-wheel zone
+- `dashboard` — instrument panel region
+- `road view area` — forward visibility zone
+- `driver body position` — posture and orientation
 
 **Why it matters:**
-This is the "eyes" of the system. Without scene understanding, the RL agent cannot know if a person is in a safe zone or a restricted zone. Segmentation provides that spatial context.
+This is the spatial context layer. Without it the RL agent cannot know if a phone is near the driver's face or just sitting on the seat. Segmentation provides that understanding.
 
-**Output:** A color-coded overlay on the webcam feed where each zone is a distinct color.
+**Output:** A color-coded overlay on the camera feed where each zone is a distinct color.
 
 ---
 
@@ -56,15 +59,18 @@ This is the "eyes" of the system. Without scene understanding, the RL agent cann
 **Model:** `YOLOv8 Nano` (Ultralytics)
 
 **What it does:**
-YOLO (You Only Look Once) scans every frame and draws bounding boxes around detected objects with class labels and confidence scores.
+YOLO scans every frame and draws bounding boxes around detected objects with class labels and confidence scores.
 
 **What it detects:**
-- People, chairs, desks, bags, laptops, phones — 80 COCO classes total
+- Mobile phone, cigarette, cup — distraction objects
+- Driver face — for gaze and drowsiness tracking
+- Steering wheel — hands-on-wheel verification
+- Seatbelt — compliance detection
 
 **Why it matters:**
-Segmentation gives zone context; YOLO gives object-level precision. Together they answer: *"There is a person (YOLO), and they are standing near a door zone (Segmentation)."*
+Segmentation gives zone context; YOLO gives object-level precision. Together they answer: *"A phone is detected (YOLO) and it is positioned near the driver's face zone (Segmentation) for more than 3 seconds."*
 
-**Output:** Bounding boxes with labels like `person 0.90`, `backpack 0.74` on the live feed.
+**Output:** Bounding boxes with labels like `phone 0.91`, `cigarette 0.82` on the live feed.
 
 ---
 
@@ -73,47 +79,59 @@ Segmentation gives zone context; YOLO gives object-level precision. Together the
 **Algorithm:** `PPO` — Proximal Policy Optimization (Stable-Baselines3)
 
 **What it does:**
-The RL agent is a trained decision-maker. It takes the combined output of Layer 1 and Layer 2 as its **observation** and decides what action to take.
+The RL agent is a trained decision-maker. It takes the combined output of Layer 1 and Layer 2 as its **observation** and decides whether a traffic violation has occurred.
 
 **Observation space (what it sees):**
-- Semantic zone labels in the frame
-- Number of persons detected
-- Proximity of persons to exit/door zones
-- Time-in-zone counter
+- Semantic zone labels from SegFormer
+- Detected objects from YOLOv8
+- Driver attention duration
+- Frequency of unsafe actions
+- Time-based activity tracking
 
 **Action space (what it decides):**
 
 | Action | Trigger Condition |
 |--------|------------------|
-| `0 — All Clear` | Person in desk/work zone, normal behavior |
-| `1 — Monitor` | Person near exit, idle for extended time |
-| `2 — Alert` | Person in restricted zone or suspicious pattern |
+| `0 — All Clear` | Driver focused, hands on wheel, no distractions |
+| `1 — Monitor` | Suspicious activity detected, observing pattern |
+| `2 — Violation` | Confirmed unsafe behavior exceeding time threshold |
 
 **Reward function:**
-- `+1` for correct alert
-- `-1` for false alert
-- `-2` for missed threat
-
-**Why it matters:**
-This is what makes CampusWatch different from plain YOLO. Any camera can detect a person. Only an intelligent agent can decide whether that person's *context* is a threat.
+- `+1` for correctly detecting a violation
+- `-1` for a false alert
+- `-2` for missing a real violation
 
 ---
 
 ## How the Layers Work Together
 
 ```
-Webcam Frame
+Camera Frame (Dashboard / Traffic Camera)
      │
-     ├──► Layer 1: SegFormer ──► Scene Zone Map (person / desk / door / floor)
+     ├──► Layer 1: SegFormer ──► Scene Zone Map (seat / steering / dashboard / road)
      │
-     ├──► Layer 2: YOLOv8   ──► Object Bounding Boxes + Labels
+     ├──► Layer 2: YOLOv8   ──► Object Detections (phone / cigarette / face / seatbelt)
      │
-     └──► Layer 3: RL Agent ──► reads Zone Map + Boxes ──► All Clear / Monitor / Alert
-                                                                    │
-                                                            Streamlit Dashboard
+     └──► Layer 3: RL Agent ──► reads Zone Map + Detections ──► All Clear / Monitor / Violation
+                                                                          │
+                                                              Challan Generation Pipeline
 ```
 
-Segmentation runs every 10 frames (CPU-friendly). YOLO runs every frame (lightweight). The RL agent reads both outputs and decides the safety status in real-time.
+Segmentation runs every 10 frames (CPU-friendly). YOLO runs every frame. The RL agent combines both and makes a violation decision in real-time.
+
+---
+
+## Automatic Challan Generation
+
+Once the RL agent confirms a violation, the system triggers a five-step enforcement pipeline:
+
+| Step | Action |
+|------|--------|
+| 1 — Capture Evidence | Violation frame saved with timestamp |
+| 2 — License Plate Detection | ANPR module detects vehicle number plate |
+| 3 — OCR Extraction | EasyOCR reads the plate number from the image |
+| 4 — Violation Logging | Vehicle number, violation type, timestamp, location, evidence stored |
+| 5 — E-Challan Generation | Challan automatically generated and sent to traffic authority database |
 
 ---
 
@@ -123,17 +141,19 @@ Segmentation runs every 10 frames (CPU-friendly). YOLO runs every frame (lightwe
 |-----------|-----------|
 | Object Detection | YOLOv8 Nano — Ultralytics |
 | Semantic Segmentation | SegFormer-b0 — HuggingFace Transformers |
+| Face + Pose Tracking | MediaPipe |
 | RL Agent | PPO — Stable-Baselines3 |
 | RL Environment | Gymnasium |
-| Webcam + Video | OpenCV |
+| License Plate OCR | EasyOCR |
+| Camera + Video | OpenCV |
 | Dashboard UI | Streamlit |
 | Deep Learning | PyTorch |
 
-
 ## Future Scope
 
-- Multi-camera support for full campus coverage
-- Night vision / low-light model fine-tuning
-- Alert notification system via email/SMS
-- Historical incident logging and analytics dashboard
-- Edge deployment on Raspberry Pi / Jetson Nano
+- Multi-lane roadside camera support for large-scale enforcement
+- Night vision and low-light model fine-tuning
+- Real-time SMS alert to traffic authority on violation
+- Integration with national vehicle registration database
+- Edge deployment on Raspberry Pi / Jetson Nano for in-vehicle use
+- Attention Score tracking — rolling distraction percentage over a 10-minute window
